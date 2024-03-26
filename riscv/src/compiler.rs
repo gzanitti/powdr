@@ -258,9 +258,9 @@ pub fn compile<T: FieldElement>(
     let degree = 1 << degree;
 
     let mut imports = vec![
-        "use std::binary::Binary;",
-        "use std::shift::Shift;",
-        "use std::split::split_gl::SplitGL;",
+        "use std::machines::binary::Binary;",
+        "use std::machines::shift::Shift;",
+        "use std::machines::split::split_gl::SplitGL;",
     ];
     imports.extend(coprocessors.machine_imports());
 

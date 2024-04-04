@@ -40,7 +40,7 @@ lazy_static! {
         ("std::convert::fe", ("T: FromLiteral", "T -> fe")),
         ("std::convert::int", ("T: FromLiteral", "T -> int")),
         ("std::convert::expr", ("T: FromLiteral", "T -> expr")),
-        ("std::debug::print", ("T: ToString", "T -> std::core::Constraint[]")),
+        ("std::debug::print", ("T: ToString", "T -> constraint[]")),
         ("std::field::modulus", ("", "-> int")),
         ("std::prover::challenge", ("", "int, int -> expr")),
         ("std::prover::eval", ("", "expr -> fe")),
@@ -63,10 +63,7 @@ lazy_static! {
         (BinaryOperator::Less, ("T: Ord", "T, T -> bool")),
         (BinaryOperator::LessEqual, ("T: Ord", "T, T -> bool")),
         (BinaryOperator::Equal, ("T: Eq", "T, T -> bool")),
-        (
-            BinaryOperator::Identity,
-            ("", "expr, expr -> std::core::Constraint")
-        ),
+        (BinaryOperator::Identity, ("", "expr, expr -> constraint")),
         (BinaryOperator::NotEqual, ("T: Eq", "T, T -> bool")),
         (BinaryOperator::GreaterEqual, ("T: Ord", "T, T -> bool")),
         (BinaryOperator::Greater, ("T: Ord", "T, T -> bool")),

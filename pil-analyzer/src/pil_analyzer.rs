@@ -129,12 +129,13 @@ impl PILAnalyzer {
         }
 
         if let Some(core) = self.core_if_not_present() {
+            self.current_namespace = Default::default();
             for statement in &core.0 {
                 for (name, _) in self.collect_names(statement) {
                     self.auto_added_symbols.insert(name);
                 }
             }
-            files.push(core);
+            files = once(core).chain(files).collect();
         }
 
         for PILFile(file) in files {
@@ -147,11 +148,10 @@ impl PILAnalyzer {
 
     /// Adds core types and built-in functions if they are not present in the input.
     fn core_if_not_present(&self) -> Option<PILFile> {
-        (!self.known_symbols.contains_key("std::core::Constraint")).then(|| {
+        (!self.known_symbols.contains_key("constraint")).then(|| {
             parse(
                 None,
-                "namespace std::core;
-    enum Constraint {
+                "enum constraint {
         Identity(expr, expr),
         Plookup(expr, expr[], expr, expr[]),
         Permutation(expr, expr[], expr, expr[]),
@@ -204,6 +204,8 @@ impl PILAnalyzer {
     }
 
     pub fn type_check(&mut self) {
+        // TODO also add Query to core?
+
         let query_type: Type = parse_type("int -> std::prover::Query").unwrap().into();
         let mut expressions = vec![];
         // Collect all definitions with their types and expressions.
@@ -259,7 +261,7 @@ impl PILAnalyzer {
             .collect();
         // Collect all expressions in identities.
         let statement_type = ExpectedType {
-            ty: Type::NamedType(SymbolPath::from_str("std::core::Constraint").unwrap()),
+            ty: Type::NamedType(SymbolPath::from_str("constraint").unwrap()),
             allow_array: true,
         };
         for id in &mut self.identities {

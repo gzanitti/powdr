@@ -20,10 +20,10 @@ let<T: Add + FromLiteral> sum: int, (int -> T) -> T = |length, f| fold(length, f
 /// `c` is allowed to change.
 ///
 /// Note: `latch` needs to be equal to `1`, and not merely non-zero for `c` to be able to change.
-let unchanged_until: expr, expr -> constr = |c, latch| (c' - c) * (1 - latch) = 0;
+let unchanged_until: expr, expr -> std::core::Constraint = |c, latch| (c' - c) * (1 - latch) = 0;
 
 /// Evaluates to a constraint that forces `c` to be either 0 or 1.
-let force_bool: expr -> constr = |c| c * (1 - c) = 0;
+let force_bool: expr -> std::core::Constraint = |c| c * (1 - c) = 0;
 
 /// Creates a new witness column that is constrained to the values 0 and 1.
 let new_bool: -> expr = constr || {

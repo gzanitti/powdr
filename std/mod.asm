@@ -3,6 +3,7 @@ mod array;
 mod binary;
 mod check;
 mod convert;
+mod core;
 mod debug;
 mod field;
 mod hash;

@@ -14,7 +14,7 @@ use powdr_ast::analyzed::{
     type_from_definition, Analyzed, Expression, FunctionValueDefinition, Identity, IdentityKind,
     PolynomialType, PublicDeclaration, StatementIdentifier, Symbol, SymbolKind, TypedExpression,
 };
-use powdr_parser::parse_type;
+use powdr_parser::{parse, parse_type};
 
 use crate::type_inference::{infer_types, ExpectedType};
 use crate::{side_effect_checker, AnalysisDriver};
@@ -115,12 +115,19 @@ impl PILAnalyzer {
         }
     }
 
-    pub fn process(&mut self, files: Vec<PILFile>) {
+    pub fn process(&mut self, mut files: Vec<PILFile>) {
         for PILFile(file) in &files {
             self.current_namespace = Default::default();
             for statement in file {
                 self.collect_names(statement);
             }
+        }
+
+        if let Some(core) = self.core_if_not_present() {
+            for statement in &core.0 {
+                self.collect_names(statement);
+            }
+            files.push(core);
         }
 
         for PILFile(file) in files {
@@ -129,6 +136,23 @@ impl PILAnalyzer {
                 self.handle_statement(statement);
             }
         }
+    }
+
+    /// Adds core types and built-in functions if they are not present in the input.
+    fn core_if_not_present(&mut self) -> Option<PILFile> {
+        (!self.known_symbols.contains_key("std::core::Constraint")).then(|| {
+            parse(
+                None,
+                "namespace std::core;
+    enum Constraint {
+        Identity(expr, expr),
+        Plookup(expr, expr[], expr, expr[]),
+        Permutation(expr, expr[], expr, expr[]),
+        Connection(expr[], expr[])
+    }",
+            )
+            .unwrap()
+        })
     }
 
     /// Check that query and constr functions are used in the correct contexts.

@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::iter::once;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use powdr_ast::parsed::asm::{AbsoluteSymbolPath, SymbolPath};
 use powdr_ast::parsed::types::Type;
@@ -258,7 +259,7 @@ impl PILAnalyzer {
             .collect();
         // Collect all expressions in identities.
         let statement_type = ExpectedType {
-            ty: Type::Constr,
+            ty: Type::NamedType(SymbolPath::from_str("std::core::Constraint").unwrap()),
             allow_array: true,
         };
         for id in &mut self.identities {

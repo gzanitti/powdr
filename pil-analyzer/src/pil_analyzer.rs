@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use powdr_ast::parsed::asm::{AbsoluteSymbolPath, SymbolPath};
 use powdr_ast::parsed::types::Type;
 use powdr_ast::parsed::visitor::Children;
-use powdr_ast::parsed::{self, FunctionKind, LambdaExpression, PILFile, PilStatement, SymbolCategory};
+use powdr_ast::parsed::{
+    self, FunctionKind, LambdaExpression, PILFile, PilStatement, SymbolCategory,
+};
 use powdr_number::{DegreeType, FieldElement, GoldilocksField};
 
 use powdr_ast::analyzed::{
@@ -62,6 +64,8 @@ struct PILAnalyzer {
     /// appear in the source.
     source_order: Vec<StatementIdentifier>,
     symbol_counters: Option<Counters>,
+    /// Symbols from the core that were added automatically but will not be printed.
+    auto_added_symbols: HashSet<String>,
 }
 
 /// Reads and parses the given path and all its imports.
@@ -125,7 +129,9 @@ impl PILAnalyzer {
 
         if let Some(core) = self.core_if_not_present() {
             for statement in &core.0 {
-                self.collect_names(statement);
+                for (name, _) in self.collect_names(statement) {
+                    self.auto_added_symbols.insert(name);
+                }
             }
             files.push(core);
         }
@@ -139,7 +145,7 @@ impl PILAnalyzer {
     }
 
     /// Adds core types and built-in functions if they are not present in the input.
-    fn core_if_not_present(&mut self) -> Option<PILFile> {
+    fn core_if_not_present(&self) -> Option<PILFile> {
         (!self.known_symbols.contains_key("std::core::Constraint")).then(|| {
             parse(
                 None,
@@ -296,14 +302,16 @@ impl PILAnalyzer {
             self.public_declarations,
             &self.identities,
             self.source_order,
+            self.auto_added_symbols,
         )
     }
 
     /// A step to collect all defined names in the statement.
-    fn collect_names(&mut self, statement: &PilStatement) {
+    fn collect_names(&mut self, statement: &PilStatement) -> Vec<(String, SymbolCategory)> {
         match statement {
             PilStatement::Namespace(_, name, _) => {
                 self.current_namespace = AbsoluteSymbolPath::default().join(name.clone());
+                vec![]
             }
             PilStatement::Include(_, _) => unreachable!(),
             _ => {
@@ -323,15 +331,16 @@ impl PILAnalyzer {
                             }),
                     )
                     .collect::<Vec<_>>();
-                for (name, symbol_kind) in names {
+                for (name, symbol_kind) in &names {
                     if self
                         .known_symbols
-                        .insert(name.clone(), symbol_kind)
+                        .insert(name.clone(), *symbol_kind)
                         .is_some()
                     {
                         panic!("Duplicate symbol definition: {name}");
                     }
                 }
+                names
             }
         }
     }

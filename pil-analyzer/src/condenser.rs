@@ -35,6 +35,7 @@ pub fn condense<T: FieldElement>(
     mut public_declarations: HashMap<String, PublicDeclaration>,
     identities: &[Identity<Expression>],
     source_order: Vec<StatementIdentifier>,
+    auto_added_symbols: HashSet<String>,
 ) -> Analyzed<T> {
     let mut condenser = Condenser::new(&definitions);
 
@@ -149,6 +150,7 @@ pub fn condense<T: FieldElement>(
         intermediate_columns,
         identities: condensed_identities,
         source_order,
+        auto_added_symbols,
     }
 }
 

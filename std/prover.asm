@@ -18,3 +18,10 @@ enum Query {
 /// Constructs a challenge object.
 /// The arguments are the proof stage and the id of the challenge, in this order.
 let challenge: int, int -> expr = [];
+
+
+/// Returns the current number of rows, sometimes known as the "degree".
+let the_degree: -> int = [];
+
+let require_min_degree: int -> = |m| std::check::assert(the_degree() >= m, || "Degree too small.");
+let require_max_degree: int -> = |m| std::check::assert(the_degree() <= m, || "Degree too large.");

@@ -325,7 +325,7 @@ impl<'a, T: FieldElement> Value<'a, T> {
     }
 }
 
-const BUILTINS: [(&str, BuiltinFunction); 9] = [
+const BUILTINS: [(&str, BuiltinFunction); 10] = [
     ("std::array::len", BuiltinFunction::ArrayLen),
     ("std::check::panic", BuiltinFunction::Panic),
     ("std::convert::expr", BuiltinFunction::ToExpr),
@@ -334,6 +334,7 @@ const BUILTINS: [(&str, BuiltinFunction); 9] = [
     ("std::debug::print", BuiltinFunction::Print),
     ("std::field::modulus", BuiltinFunction::Modulus),
     ("std::prover::challenge", BuiltinFunction::Challenge),
+    ("std::prover::the_degree", BuiltinFunction::Degree),
     ("std::prover::eval", BuiltinFunction::Eval),
 ];
 
@@ -357,6 +358,8 @@ pub enum BuiltinFunction {
     ToFe,
     /// std::prover::challenge: int, int -> expr, constructs a challenge with a given stage and ID.
     Challenge,
+    /// std::prover::the_degree: -> int, returns the current column length / degree.
+    Degree,
     /// std::prover::eval: expr -> fe, evaluates an expression on the current row
     Eval,
 }
@@ -510,6 +513,12 @@ pub trait SymbolLookup<'a, T> {
 
     fn eval_expr(&self, _expr: &AlgebraicExpression<T>) -> Result<Arc<Value<'a, T>>, EvalError> {
         Err(EvalError::DataNotAvailable)
+    }
+
+    fn degree(&self) -> Result<Arc<Value<'a, T>>, EvalError> {
+        Err(EvalError::Unsupported(
+            "Cannot evaluate degree.".to_string(),
+        ))
     }
 
     fn new_witness_column(
@@ -873,6 +882,7 @@ mod internal {
             BuiltinFunction::ToFe => 1,
             BuiltinFunction::ToInt => 1,
             BuiltinFunction::Challenge => 2,
+            BuiltinFunction::Degree => 0,
             BuiltinFunction::Eval => 1,
         };
 
@@ -942,6 +952,7 @@ mod internal {
                 }))
                 .into()
             }
+            BuiltinFunction::Degree => symbols.degree()?,
             BuiltinFunction::Eval => {
                 let arg = arguments.pop().unwrap();
                 match arg.as_ref() {

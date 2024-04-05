@@ -43,6 +43,7 @@ lazy_static! {
         ("std::debug::print", ("", "string -> constr[]")),
         ("std::field::modulus", ("", "-> int")),
         ("std::prover::challenge", ("", "int, int -> expr")),
+        ("std::prover::the_degree", ("", "-> int")),
         ("std::prover::eval", ("", "expr -> fe")),
     ]
     .into_iter()

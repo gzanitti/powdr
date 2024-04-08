@@ -18,3 +18,10 @@ enum Query {
 /// Constructs a challenge object.
 /// The arguments are the proof stage and the id of the challenge, in this order.
 let challenge: int, int -> expr = [];
+
+
+/// Calls a function that adds constraints to the global context
+/// and returns the degree.
+/// Returns those constraints and asserts that the global context
+/// is empty at the beginning. Increments the stage.
+let capture_stage: (-> int) -> constraint[] = [];

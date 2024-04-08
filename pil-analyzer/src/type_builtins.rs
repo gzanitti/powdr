@@ -42,6 +42,10 @@ lazy_static! {
         ("std::convert::expr", ("T: FromLiteral", "T -> expr")),
         ("std::debug::print", ("T: ToString", "T -> constraint[]")),
         ("std::field::modulus", ("", "-> int")),
+        (
+            "std::prover::capture_stage",
+            ("", "(-> int) -> constraint[]")
+        ),
         ("std::prover::challenge", ("", "int, int -> expr")),
         ("std::prover::eval", ("", "expr -> fe")),
     ]

@@ -343,7 +343,7 @@ impl<'a, T: FieldElement> Value<'a, T> {
     }
 }
 
-const BUILTINS: [(&str, BuiltinFunction); 9] = [
+const BUILTINS: [(&str, BuiltinFunction); 10] = [
     ("std::array::len", BuiltinFunction::ArrayLen),
     ("std::check::panic", BuiltinFunction::Panic),
     ("std::convert::expr", BuiltinFunction::ToExpr),
@@ -351,6 +351,7 @@ const BUILTINS: [(&str, BuiltinFunction); 9] = [
     ("std::convert::int", BuiltinFunction::ToInt),
     ("std::debug::print", BuiltinFunction::Print),
     ("std::field::modulus", BuiltinFunction::Modulus),
+    ("std::prover::capture_stage", BuiltinFunction::CaptureStage),
     ("std::prover::challenge", BuiltinFunction::Challenge),
     ("std::prover::eval", BuiltinFunction::Eval),
 ];
@@ -373,6 +374,8 @@ pub enum BuiltinFunction {
     ToInt,
     /// std::convert::fe: int/fe -> fe, converts int to fe
     ToFe,
+    /// DOC
+    CaptureStage,
     /// std::prover::challenge: int, int -> expr, constructs a challenge with a given stage and ID.
     Challenge,
     /// std::prover::eval: expr -> fe, evaluates an expression on the current row
@@ -547,6 +550,12 @@ pub trait SymbolLookup<'a, T> {
     ) -> Result<(), EvalError> {
         Err(EvalError::Unsupported(
             "Tried to add constraints outside of statement context.".to_string(),
+        ))
+    }
+
+    fn capture_stage(&mut self, _fun: Arc<Value<'a, T>>) -> Result<Arc<Value<'a, T>>, EvalError> {
+        Err(EvalError::Unsupported(
+            "The function capture_stage is not allowed at this point.".to_string(),
         ))
     }
 }
@@ -892,6 +901,7 @@ mod internal {
             BuiltinFunction::ToFe => 1,
             BuiltinFunction::ToInt => 1,
             BuiltinFunction::Challenge => 2,
+            BuiltinFunction::CaptureStage => 1,
             BuiltinFunction::Eval => 1,
         };
 
@@ -942,6 +952,10 @@ mod internal {
             }
             BuiltinFunction::Modulus => {
                 Value::Integer(T::modulus().to_arbitrary_integer().into()).into()
+            }
+            BuiltinFunction::CaptureStage => {
+                let fun = arguments.pop().unwrap();
+                symbols.capture_stage(fun)?
             }
             BuiltinFunction::Challenge => {
                 let [stage, index] = &arguments[..] else {

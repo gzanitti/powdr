@@ -8,6 +8,7 @@ use std::{
     sync::Arc,
 };
 
+use itertools::Itertools;
 use powdr_ast::{
     analyzed::{
         AlgebraicExpression, AlgebraicReference, Analyzed, Expression, FunctionValueDefinition,
@@ -25,7 +26,7 @@ use powdr_ast::{
 use powdr_number::{DegreeType, FieldElement};
 
 use crate::{
-    evaluator::{self, Definitions, SymbolLookup, Value},
+    evaluator::{self, evaluate_function_call, Definitions, EvalError, SymbolLookup, Value},
     statement_processor::Counters,
 };
 
@@ -320,7 +321,7 @@ impl<'a, T: FieldElement> SymbolLookup<'a, T> for Condenser<'a, T> {
         &mut self,
         name: &'a str,
         type_args: Option<Vec<Type>>,
-    ) -> Result<Arc<Value<'a, T>>, evaluator::EvalError> {
+    ) -> Result<Arc<Value<'a, T>>, EvalError> {
         // Cache already computed values.
         // Note that the cache is essential because otherwise
         // we re-evaluate simple values, which users would not expect.
@@ -335,10 +336,7 @@ impl<'a, T: FieldElement> SymbolLookup<'a, T> for Condenser<'a, T> {
         Ok(value)
     }
 
-    fn lookup_public_reference(
-        &self,
-        name: &str,
-    ) -> Result<Arc<Value<'a, T>>, evaluator::EvalError> {
+    fn lookup_public_reference(&self, name: &str) -> Result<Arc<Value<'a, T>>, EvalError> {
         Definitions(self.symbols).lookup_public_reference(name)
     }
 
@@ -346,7 +344,7 @@ impl<'a, T: FieldElement> SymbolLookup<'a, T> for Condenser<'a, T> {
         &mut self,
         name: &str,
         source: SourceRef,
-    ) -> Result<Arc<Value<'a, T>>, evaluator::EvalError> {
+    ) -> Result<Arc<Value<'a, T>>, EvalError> {
         let name = self.find_unused_name(name);
         let symbol = Symbol {
             id: self.next_witness_id,
@@ -373,7 +371,7 @@ impl<'a, T: FieldElement> SymbolLookup<'a, T> for Condenser<'a, T> {
         &mut self,
         constraints: Arc<Value<'a, T>>,
         source: SourceRef,
-    ) -> Result<(), evaluator::EvalError> {
+    ) -> Result<(), EvalError> {
         let identities: Box<dyn Iterator<Item = _>> = match constraints.as_ref() {
             Value::Enum("Identity", Some(fields)) => {
                 let [left, right] = &fields[..] else {
@@ -402,6 +400,50 @@ impl<'a, T: FieldElement> SymbolLookup<'a, T> for Condenser<'a, T> {
                 ));
         }
         Ok(())
+    }
+
+    fn capture_stage(&mut self, fun: Arc<Value<'a, T>>) -> Result<Arc<Value<'a, T>>, EvalError> {
+        // TODO also check that there are no constraints at the global level.
+        if !self.new_constraints.is_empty() {
+            return Err(EvalError::Unsupported(format!(
+                "Stage is not fresh, there are constraints: {}",
+                self.new_constraints
+                    .iter()
+                    .map(|id| id.clone().into_identity(0))
+                    .format(", ")
+            )));
+        }
+
+        let degree = evaluate_function_call(fun, vec![], self)?;
+        let Value::Integer(degree) = degree.as_ref() else {
+            panic!("Type error")
+        };
+        // TODO use degree
+        Ok(Value::Array(
+            self.extract_new_constraints()
+                .into_iter()
+                .map(|id| {
+                    (match id.kind {
+                        IdentityKind::Polynomial => Value::Enum(
+                            "Identity",
+                            Some(vec![
+                                Value::Expression(id.left.selector.unwrap()).into(),
+                                Arc::new(Value::Expression(AlgebraicExpression::Number(0.into()))),
+                            ]),
+                        ),
+                        IdentityKind::Plookup => todo!(),
+                        IdentityKind::Permutation => todo!(),
+                        IdentityKind::Connect => todo!(),
+                        // Identity(expr, expr),
+                        // Plookup(expr, expr[], expr, expr[]),
+                        // Permutation(expr, expr[], expr, expr[]),
+                        // Connection(expr[], expr[])
+                    })
+                    .into()
+                })
+                .collect(),
+        )
+        .into())
     }
 }
 

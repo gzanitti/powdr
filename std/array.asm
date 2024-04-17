@@ -25,7 +25,7 @@ let<T: Add + FromLiteral> sum: T[] -> T = |arr| fold(arr, 0, |a, b| a + b);
 let<T1, T2, T3> zip: T1[], T2[], (T1, T2 -> T3) -> T3[] = |array1, array2, fn| new(len(array1), |i| fn(array1[i], array2[i]));
 
 
-let<T> sort: T[], (T, T -> bool) -> T[] = |arr, lt| internal::sort(to_slice(arr), lt);
+let<T: ToString> sort: T[], (T, T -> bool) -> T[] = |arr, lt| internal::sort(to_slice(arr), lt);
 
 // TODO turn this into a struct once we have structs.
 enum Slice<T> {
@@ -59,12 +59,14 @@ mod internal {
     use super::to_slice;
     use super::to_array;
 
-    let<T> sort: Slice<T>, (T, T -> bool) -> T[] = |slice, lt| match slice {
+    let<T: ToString> sort: Slice<T>, (T, T -> bool) -> T[] = |slice, lt| match slice {
         Slice::S(_, _, 0) => [],
-        Slice::S(arr, start, 1) => [arr[start]],
+        Slice::S(_, _, 1) => to_array(slice),
         s => {
             let (left, right) = split_slice_half(s);
-            merge(left, right, lt)
+            let left_sorted = to_slice(sort(left, lt));
+            let right_sorted = to_slice(sort(right, lt));
+            merge(left_sorted, right_sorted, lt)
         }
     };
 

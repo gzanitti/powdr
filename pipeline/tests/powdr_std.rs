@@ -1,13 +1,12 @@
 use std::sync::Arc;
 
-use powdr_ast::parsed::types::Type;
 use powdr_number::{BigInt, GoldilocksField};
 
 use powdr_pil_analyzer::evaluator::Value;
 use powdr_pipeline::{
     test_util::{
-        evaluate_function, evaluate_generic_function, evaluate_integer_function, gen_estark_proof,
-        gen_halo2_proof, std_analyzed, test_halo2, verify_test_file,
+        evaluate_function, evaluate_integer_function, gen_estark_proof, gen_halo2_proof,
+        std_analyzed, test_halo2, verify_test_file,
     },
     Pipeline,
 };
@@ -213,6 +212,9 @@ fn sort() {
         vec![],
         vec![1],
         vec![0, 0],
+        vec![1, 2],
+        vec![2, 1],
+        vec![3, 2, 1],
         vec![0, 0, -1],
         vec![0, 0, -1, 0, 0, -1, -1, 2],
         vec![8, 0, 9, 20, 23, 88, 14, -9],
@@ -228,10 +230,12 @@ fn sort() {
         let result = evaluate_function(
             &analyzed,
             "test_sort",
-            input
-                .into_iter()
-                .map(|x| Arc::new(Value::Integer(x.into())))
-                .collect(),
+            vec![Arc::new(Value::Array(
+                input
+                    .into_iter()
+                    .map(|x| Arc::new(Value::Integer(x.into())))
+                    .collect(),
+            ))],
         );
         let Value::Array(result) = result else {
             panic!("Expected array")

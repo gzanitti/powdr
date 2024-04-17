@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use powdr_number::{BigInt, GoldilocksField};
 
+use powdr_pil_analyzer::evaluator::Value;
 use powdr_pipeline::test_util::{
-    evaluate_integer_function, gen_estark_proof, gen_halo2_proof, std_analyzed, test_halo2,
-    verify_test_file,
+    evaluate_function, evaluate_integer_function, gen_estark_proof, gen_halo2_proof, std_analyzed,
+    test_halo2, verify_test_file,
 };
 use test_log::test;
 
@@ -198,4 +201,40 @@ fn ff_inv_big() {
         vec![x.clone(), modulus.clone()],
     );
     assert_eq!((result * x) % modulus, 1.into());
+}
+
+#[test]
+fn sort() {
+    let test_inputs = vec![
+        vec![],
+        vec![1],
+        vec![0, 0],
+        vec![0, 0, -1],
+        vec![0, 0, -1, 0, 0, -1, -1, 2],
+        vec![8, 0, 9, 20, 23, 88, 14, -9],
+    ];
+    let analyzed = std_analyzed::<GoldilocksField>();
+    for input in test_inputs {
+        let mut input_sorted = input.clone();
+        input_sorted.sort();
+        let result = evaluate_function(
+            &analyzed,
+            "std::array::sort",
+            input
+                .into_iter()
+                .map(|x| Arc::new(Value::Integer(x.into())))
+                .collect(),
+        );
+        let Value::Array(result) = result else {
+            panic!("Expected array")
+        };
+        let result: Vec<i32> = result
+            .into_iter()
+            .map(|x| match x.as_ref() {
+                Value::Integer(x) => x.try_into().unwrap(),
+                _ => panic!("Expected integer"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(input_sorted, result);
+    }
 }

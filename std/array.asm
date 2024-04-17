@@ -35,9 +35,9 @@ enum Slice<T> {
 
 let<T> to_slice: T[] -> Slice<T> = |x| Slice::S(x, 0, len(x));
 let<T> to_array: Slice<T> -> T[] = |s| match s {
-      Slice::S(arr, start, l) => std::array::new(l, |i| arr[start + i]),
+    Slice::S(arr, start, l) => std::array::new(l, |i| arr[start + i]),
 };
-let<T> split_slice: Slice<T> -> (Slice<T>, Slice<T>) = |s| match s {
+let<T> split_slice_half: Slice<T> -> (Slice<T>, Slice<T>) = |s| match s {
     Slice::S(arr, start, l) => {
         let half_len = l / 2;
         (
@@ -54,7 +54,7 @@ let<T> slice_pop: Slice<T> -> (Slice<T>, std::utils::Option<T>) = |s| match s {
 mod internal {
     use std::utils::Option;
     use super::Slice;
-    use super::split_slice;
+    use super::split_slice_half;
     use super::slice_pop;
     use super::to_slice;
     use super::to_array;
@@ -63,7 +63,7 @@ mod internal {
         Slice::S(_, _, 0) => [],
         Slice::S(arr, start, 1) => [arr[start]],
         s => {
-            let (left, right) = split_slice(s);
+            let (left, right) = split_slice_half(s);
             merge(to_slice(left), to_slice(right), lt)
         }
     };

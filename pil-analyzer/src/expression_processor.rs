@@ -207,7 +207,6 @@ impl<'a, D: AnalysisDriver> ExpressionProcessor<'a, D> {
     }
 
     fn process_enum_pattern(&mut self, name: String, fields: Option<Vec<Pattern>>) -> Pattern {
-        println!("{name}");
         let (_, Some(FunctionValueDefinition::TypeConstructor(_, variant))) =
             &self.driver.definitions()[&name]
         else {

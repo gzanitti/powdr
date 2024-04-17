@@ -1,11 +1,15 @@
 use std::sync::Arc;
 
+use powdr_ast::parsed::types::Type;
 use powdr_number::{BigInt, GoldilocksField};
 
 use powdr_pil_analyzer::evaluator::Value;
-use powdr_pipeline::test_util::{
-    evaluate_function, evaluate_integer_function, gen_estark_proof, gen_halo2_proof, std_analyzed,
-    test_halo2, verify_test_file,
+use powdr_pipeline::{
+    test_util::{
+        evaluate_function, evaluate_generic_function, evaluate_integer_function, gen_estark_proof,
+        gen_halo2_proof, std_analyzed, test_halo2, verify_test_file,
+    },
+    Pipeline,
 };
 use test_log::test;
 
@@ -213,13 +217,17 @@ fn sort() {
         vec![0, 0, -1, 0, 0, -1, -1, 2],
         vec![8, 0, 9, 20, 23, 88, 14, -9],
     ];
-    let analyzed = std_analyzed::<GoldilocksField>();
+    let code =
+        "let test_sort: int[] -> int[] = |x| std::array::sort(x, |a, b| a < b); machine Main { }"
+            .to_string();
+    let mut pipeline = Pipeline::<GoldilocksField>::default().from_asm_string(code, None);
+    let analyzed = pipeline.compute_analyzed_pil().unwrap().clone();
     for input in test_inputs {
         let mut input_sorted = input.clone();
         input_sorted.sort();
         let result = evaluate_function(
             &analyzed,
-            "std::array::sort",
+            "test_sort",
             input
                 .into_iter()
                 .map(|x| Arc::new(Value::Integer(x.into())))

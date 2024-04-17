@@ -42,13 +42,13 @@ let<T> split_slice_half: Slice<T> -> (Slice<T>, Slice<T>) = |s| match s {
         let half_len = l / 2;
         (
             Slice::S(arr, start, half_len),
-            Slice::S(arr, start + half_len, len - half_len)
+            Slice::S(arr, start + half_len, l - half_len)
         )
     }
 };
 let<T> slice_pop: Slice<T> -> (Slice<T>, std::utils::Option<T>) = |s| match s {
     Slice::S(_, _, 0) => (s, std::utils::Option::None),
-    Slice::S(arr, start, len) => (Slice::S(arr, start, len - 1), std::utils::Option::Some(arr[start + len - 1])),
+    Slice::S(arr, start, l) => (Slice::S(arr, start, l - 1), std::utils::Option::Some(arr[start + l - 1])),
 };
 
 mod internal {
@@ -64,7 +64,7 @@ mod internal {
         Slice::S(arr, start, 1) => [arr[start]],
         s => {
             let (left, right) = split_slice_half(s);
-            merge(to_slice(left), to_slice(right), lt)
+            merge(left, right, lt)
         }
     };
 
@@ -74,7 +74,7 @@ mod internal {
         match (slice_pop(left), slice_pop(right)) {
             ((_, Option::None), _) => to_array(right),
             (_, (_, Option::None)) => to_array(left),
-            ((l_short, l_last), (r_short, r_last)) =>
+            ((l_short, Option::Some(l_last)), (r_short, Option::Some(r_last))) =>
                 if lt(l_last, r_last) {
                     merge(left, r_short, lt) + [r_last]
                 } else {

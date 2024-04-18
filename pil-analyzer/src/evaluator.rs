@@ -560,6 +560,88 @@ mod internal {
     use powdr_number::BigUint;
 
     use super::*;
+    // T
+    // T "1" "2" "3" "4"
+    // T V1 V2 V3 V4
+    // (V1, V2, V3, V4)
+    // -> We need a separate value stack.
+
+    // '(1, (2, 3))' |
+    // '!(1, (2, 3))', '(2, 3)', '1' |
+    // '!(1, (2, 3))', '(2, 3)' | 1
+    // '!(1, (2, 3))', '!(2, 3)', '3', '2' | 1
+    // '!(1, (2, 3))', '!(2, 3)', '3' | 1, 2
+    // '!(1, (2, 3))', '!(2, 3)' | 1, 2, 3
+    // '!(1, (2, 3))' | 1, (2, 3)
+    // | (1, (2, 3))
+
+    enum StackItem<'a> {
+        /// An expression that we still need to expand or a leaf expression.
+        Expand(&'a Expression),
+        /// An non-leaf expression that has been expanded and can be evaluated
+        /// as soon as its sub-expressions have been evaluated.
+        /// The second field is the number of children.
+        Combine(&'a Expression, usize),
+    }
+
+    enum ExpandResult<'a, T> {
+        Value(Arc<Value<'a, T>>),
+        // TODO use iter instead of vec?
+        Children(Vec<&'a Expression>),
+    }
+
+    pub fn evaluate<'a, 'b, T: FieldElement>(
+        expr: &'a Expression,
+        locals: &[Arc<Value<'a, T>>],
+        type_args: &'b HashMap<String, Type>,
+        symbols: &mut impl SymbolLookup<'a, T>,
+    ) -> Result<Arc<Value<'a, T>>, EvalError> {
+        let mut expr_stack = vec![StackItem::Expand(expr)];
+        let mut value_stack = vec![];
+        while let Some(e) = expr_stack.pop() {
+            match e {
+                StackItem::Expand(expr) => match expand(expr, locals, type_args, symbols)? {
+                    ExpandResult::Value(v) => value_stack.push(v),
+                    ExpandResult::Children(children) => {
+                        expr_stack.push(StackItem::Combine(expr, children.len()));
+                        expr_stack.extend(children.into_iter().map(StackItem::Expand));
+                    }
+                },
+                StackItem::Combine(expr, children) => {
+                    let inner_values = value_stack.split_off(value_stack.len() - children);
+                    value_stack.push(combine(expr, inner_values, symbols)?)
+                }
+            }
+        }
+        assert_eq!(value_stack.len(), 1);
+        Ok(value_stack.pop().unwrap())
+    }
+
+    fn expand<'a, 'b, T: FieldElement>(
+        expr: &'a Expression,
+        locals: &[Arc<Value<'a, T>>],
+        type_args: &'b HashMap<String, Type>,
+        symbols: &mut impl SymbolLookup<'a, T>,
+    ) -> Result<ExpandResult<'a, T>, EvalError> {
+        Ok(match expr {
+            Expression::Reference(reference) => {
+                ExpandResult::Value(evaluate_reference(reference, locals, type_args, symbols)?)
+            }
+            Expression::Tuple(items) => ExpandResult::Children(items.iter().rev().collect()),
+            _ => todo!(),
+        })
+    }
+
+    fn combine<'a, T: FieldElement>(
+        expr: &'a Expression,
+        inner_values: Vec<Arc<Value<'a, T>>>,
+        symbols: &mut impl SymbolLookup<'a, T>,
+    ) -> Result<Arc<Value<'a, T>>, EvalError> {
+        Ok(match expr {
+            Expression::Tuple(items) => Value::Tuple(inner_values).into(),
+            _ => todo!(),
+        })
+    }
 
     pub fn evaluate<'a, 'b, T: FieldElement>(
         expr: &'a Expression,

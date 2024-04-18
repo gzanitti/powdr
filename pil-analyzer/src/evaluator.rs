@@ -596,7 +596,15 @@ mod internal {
         type_args: &'b HashMap<String, Type>,
         symbols: &mut impl SymbolLookup<'a, T>,
     ) -> Result<Arc<Value<'a, T>>, EvalError> {
+        // We use a non-recursive algorithm to evaluate potentially recursive expressions.
+        // This allows arbitrarily deep recursion in PIL on a physical machine with limited stack.
+        // SymbolLookup might still do regular recursive calls into the evaluator,
+        // but this is very limited.
+
+        // Expressions to be evaluated.
         let mut expr_stack = vec![StackItem::Expand(expr)];
+        // Values that are the result of evaluating inner expressions, waiting to be combined by
+        // the outer expression.
         let mut value_stack = vec![];
         while let Some(e) = expr_stack.pop() {
             match e {
@@ -623,54 +631,18 @@ mod internal {
         type_args: &'b HashMap<String, Type>,
         symbols: &mut impl SymbolLookup<'a, T>,
     ) -> Result<ExpandResult<'a, T>, EvalError> {
+        use ExpandResult::*;
         Ok(match expr {
             Expression::Reference(reference) => {
-                ExpandResult::Value(evaluate_reference(reference, locals, type_args, symbols)?)
+                Value(evaluate_reference(reference, locals, type_args, symbols)?)
             }
+            Expression::PublicReference(name) => Value(symbols.lookup_public_reference(name)?),
+            Expression::Number(n, ty) => Value(evaluate_literal(n.clone(), ty, type_args)?),
+            Expression::String(s) => Value(super::Value::String(s.clone()).into()),
             Expression::Tuple(items) => ExpandResult::Children(items.iter().rev().collect()),
-            _ => todo!(),
-        })
-    }
-
-    fn combine<'a, T: FieldElement>(
-        expr: &'a Expression,
-        inner_values: Vec<Arc<Value<'a, T>>>,
-        symbols: &mut impl SymbolLookup<'a, T>,
-    ) -> Result<Arc<Value<'a, T>>, EvalError> {
-        Ok(match expr {
-            Expression::Tuple(items) => Value::Tuple(inner_values).into(),
-            _ => todo!(),
-        })
-    }
-
-    pub fn evaluate<'a, 'b, T: FieldElement>(
-        expr: &'a Expression,
-        locals: &[Arc<Value<'a, T>>],
-        type_args: &'b HashMap<String, Type>,
-        symbols: &mut impl SymbolLookup<'a, T>,
-    ) -> Result<Arc<Value<'a, T>>, EvalError> {
-        Ok(match expr {
-            Expression::Reference(reference) => {
-                evaluate_reference(reference, locals, type_args, symbols)?
+            Expression::ArrayLiteral(array) => {
+                ExpandResult::Children(array.items.iter().rev().collect())
             }
-            Expression::PublicReference(name) => symbols.lookup_public_reference(name)?,
-            Expression::Number(n, ty) => evaluate_literal(n.clone(), ty, type_args)?,
-            Expression::String(s) => Value::String(s.clone()).into(),
-            Expression::Tuple(items) => Value::Tuple(
-                items
-                    .iter()
-                    .map(|e| evaluate(e, locals, type_args, symbols))
-                    .collect::<Result<_, _>>()?,
-            )
-            .into(),
-            Expression::ArrayLiteral(elements) => (Value::Array(
-                elements
-                    .items
-                    .iter()
-                    .map(|e| evaluate(e, locals, type_args, symbols))
-                    .collect::<Result<_, _>>()?,
-            ))
-            .into(),
             Expression::BinaryOperation(left, op, right) => {
                 let left = evaluate(left, locals, type_args, symbols)?;
                 let right = evaluate(right, locals, type_args, symbols)?;
@@ -712,113 +684,135 @@ mod internal {
                     )))?,
                 }
             }
-            Expression::LambdaExpression(lambda) => {
-                // TODO only copy the part of the environment that is actually referenced?
-                Value::from(Closure {
-                    lambda,
-                    environment: locals.to_vec(),
-                    type_args: type_args.clone(),
-                })
-                .into()
-            }
-            Expression::IndexAccess(index_access) => {
-                match evaluate(&index_access.array, locals, type_args, symbols)?.as_ref() {
-                    Value::Array(elements) => {
-                        match evaluate(&index_access.index, locals, type_args,symbols)?.as_ref() {
-                            Value::Integer(index)
-                                if index.is_negative()
-                                    || *index >= (elements.len() as u64).into() =>
-                            {
-                                Err(EvalError::OutOfBounds(format!(
-                                    "Index access out of bounds: Tried to access element {index} of array of size {} in: {expr}.",
-                                    elements.len()
-                                )))?
-                            }
-                            Value::Integer(index) => {
-                                elements[usize::try_from(index).unwrap()].clone()
-                            }
-                            index => Err(EvalError::TypeError(format!(
-                                    "Expected integer for array index access but got {index}: {}",
-                                    index.type_formatted()
-                            )))?,
-                        }
-                    }
-                    e => Err(EvalError::TypeError(format!("Expected array, but got {e}")))?,
-                }
-            }
-            Expression::FunctionCall(FunctionCall {
-                function,
-                arguments,
-            }) => {
-                let function = evaluate(function, locals, type_args, symbols)?;
-                let arguments = arguments
-                    .iter()
-                    .map(|a| evaluate(a, locals, type_args, symbols))
-                    .collect::<Result<Vec<_>, _>>()?;
-                evaluate_function_call(function, arguments, symbols)?
-            }
-            Expression::MatchExpression(scrutinee, arms) => {
-                let v = evaluate(scrutinee, locals, type_args, symbols)?;
-                let (vars, body) = arms
-                    .iter()
-                    .find_map(|MatchArm { pattern, value }| {
-                        Value::try_match_pattern(&v, pattern).map(|vars| (vars, value))
-                    })
-                    .ok_or_else(EvalError::NoMatch)?;
-                let mut locals = locals.to_vec();
-                locals.extend(vars);
-                evaluate(body, &locals, type_args, symbols)?
-            }
-            Expression::IfExpression(if_expr) => {
-                let cond = evaluate(&if_expr.condition, locals, type_args, symbols)?;
-                let condition = match cond.as_ref() {
-                    Value::Bool(b) => Ok(b),
-                    x => Err(EvalError::TypeError(format!(
-                        "Expected boolean value but got {x}"
-                    ))),
-                }?;
-                let body = if *condition {
-                    &if_expr.body
-                } else {
-                    &if_expr.else_body
-                };
-                evaluate(body.as_ref(), locals, type_args, symbols)?
-            }
-            Expression::BlockExpression(statements, expr) => {
-                let mut locals = locals.to_vec();
-                for statement in statements {
-                    match statement {
-                        StatementInsideBlock::LetStatement(LetStatementInsideBlock {
-                            pattern,
-                            value,
-                        }) => {
-                            let value = if let Some(value) = value {
-                                evaluate(value, &locals, type_args, symbols)?
-                            } else {
-                                let Pattern::Variable(name) = pattern else {
-                                    unreachable!()
-                                };
-                                symbols.new_witness_column(name, SourceRef::unknown())?
-                            };
-                            locals.extend(
-                                Value::try_match_pattern(&value, pattern).unwrap_or_else(|| {
-                                    panic!("Irrefutable pattern did not match: {pattern} = {value}")
-                                }),
-                            );
-                        }
-                        StatementInsideBlock::Expression(expr) => {
-                            let result = evaluate(expr, &locals, type_args, symbols)?;
-                            symbols.add_constraints(result, SourceRef::unknown())?;
-                        }
-                    }
-                }
-                evaluate(expr, &locals, type_args, symbols)?
-            }
-            Expression::FreeInput(_) => Err(EvalError::Unsupported(
-                "Cannot evaluate free input.".to_string(),
-            ))?,
+            _ => todo!(),
         })
     }
+
+    fn combine<'a, T: FieldElement>(
+        expr: &'a Expression,
+        inner_values: Vec<Arc<Value<'a, T>>>,
+        symbols: &mut impl SymbolLookup<'a, T>,
+    ) -> Result<Arc<Value<'a, T>>, EvalError> {
+        Ok(match expr {
+            Expression::Tuple(items) => Value::Tuple(inner_values).into(),
+            Expression::ArrayLiteral(array) => Value::Array(inner_values).into(),
+            Expression::BinaryOperation(left, op, right) => {
+                let [left, right] = inner_values.as_slice() else {
+                    panic!()
+                };
+                evaluate_binary_operation(&left, *op, &right)?
+            }
+            _ => todo!(),
+        })
+    }
+
+    //         Expression::LambdaExpression(lambda) => {
+    //             // TODO only copy the part of the environment that is actually referenced?
+    //             Value::from(Closure {
+    //                 lambda,
+    //                 environment: locals.to_vec(),
+    //                 type_args: type_args.clone(),
+    //             })
+    //             .into()
+    //         }
+    //         Expression::IndexAccess(index_access) => {
+    //             match evaluate(&index_access.array, locals, type_args, symbols)?.as_ref() {
+    //                 Value::Array(elements) => {
+    //                     match evaluate(&index_access.index, locals, type_args,symbols)?.as_ref() {
+    //                         Value::Integer(index)
+    //                             if index.is_negative()
+    //                                 || *index >= (elements.len() as u64).into() =>
+    //                         {
+    //                             Err(EvalError::OutOfBounds(format!(
+    //                                 "Index access out of bounds: Tried to access element {index} of array of size {} in: {expr}.",
+    //                                 elements.len()
+    //                             )))?
+    //                         }
+    //                         Value::Integer(index) => {
+    //                             elements[usize::try_from(index).unwrap()].clone()
+    //                         }
+    //                         index => Err(EvalError::TypeError(format!(
+    //                                 "Expected integer for array index access but got {index}: {}",
+    //                                 index.type_formatted()
+    //                         )))?,
+    //                     }
+    //                 }
+    //                 e => Err(EvalError::TypeError(format!("Expected array, but got {e}")))?,
+    //             }
+    //         }
+    //         Expression::FunctionCall(FunctionCall {
+    //             function,
+    //             arguments,
+    //         }) => {
+    //             let function = evaluate(function, locals, type_args, symbols)?;
+    //             let arguments = arguments
+    //                 .iter()
+    //                 .map(|a| evaluate(a, locals, type_args, symbols))
+    //                 .collect::<Result<Vec<_>, _>>()?;
+    //             evaluate_function_call(function, arguments, symbols)?
+    //         }
+    //         Expression::MatchExpression(scrutinee, arms) => {
+    //             let v = evaluate(scrutinee, locals, type_args, symbols)?;
+    //             let (vars, body) = arms
+    //                 .iter()
+    //                 .find_map(|MatchArm { pattern, value }| {
+    //                     Value::try_match_pattern(&v, pattern).map(|vars| (vars, value))
+    //                 })
+    //                 .ok_or_else(EvalError::NoMatch)?;
+    //             let mut locals = locals.to_vec();
+    //             locals.extend(vars);
+    //             evaluate(body, &locals, type_args, symbols)?
+    //         }
+    //         Expression::IfExpression(if_expr) => {
+    //             let cond = evaluate(&if_expr.condition, locals, type_args, symbols)?;
+    //             let condition = match cond.as_ref() {
+    //                 Value::Bool(b) => Ok(b),
+    //                 x => Err(EvalError::TypeError(format!(
+    //                     "Expected boolean value but got {x}"
+    //                 ))),
+    //             }?;
+    //             let body = if *condition {
+    //                 &if_expr.body
+    //             } else {
+    //                 &if_expr.else_body
+    //             };
+    //             evaluate(body.as_ref(), locals, type_args, symbols)?
+    //         }
+    //         Expression::BlockExpression(statements, expr) => {
+    //             let mut locals = locals.to_vec();
+    //             for statement in statements {
+    //                 match statement {
+    //                     StatementInsideBlock::LetStatement(LetStatementInsideBlock {
+    //                         pattern,
+    //                         value,
+    //                     }) => {
+    //                         let value = if let Some(value) = value {
+    //                             evaluate(value, &locals, type_args, symbols)?
+    //                         } else {
+    //                             let Pattern::Variable(name) = pattern else {
+    //                                 unreachable!()
+    //                             };
+    //                             symbols.new_witness_column(name, SourceRef::unknown())?
+    //                         };
+    //                         locals.extend(
+    //                             Value::try_match_pattern(&value, pattern).unwrap_or_else(|| {
+    //                                 panic!("Irrefutable pattern did not match: {pattern} = {value}")
+    //                             }),
+    //                         );
+    //                     }
+    //                     StatementInsideBlock::Expression(expr) => {
+    //                         let result = evaluate(expr, &locals, type_args, symbols)?;
+    //                         symbols.add_constraints(result, SourceRef::unknown())?;
+    //                     }
+    //                 }
+    //             }
+    //             evaluate(expr, &locals, type_args, symbols)?
+    //         }
+    //         Expression::FreeInput(_) => Err(EvalError::Unsupported(
+    //             "Cannot evaluate free input.".to_string(),
+    //         ))?,
+    //     })
+    // }
 
     fn evaluate_literal<'a, T: FieldElement>(
         n: BigUint,

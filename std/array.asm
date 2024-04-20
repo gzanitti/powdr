@@ -51,6 +51,14 @@ let<T> slice_pop: Slice<T> -> (Slice<T>, std::utils::Option<T>) = |s| match s {
     Slice::S(arr, start, l) => (Slice::S(arr, start, l - 1), std::utils::Option::Some(arr[start + l - 1])),
 };
 
+/// Takes an array of arrays and flattens it to a simple array by concatenating the arrays.
+// TODO this could just call sum above if we had a Default trait.
+let<T> flatten: T[][] -> T[] = |arr| fold(arr, [], |acc, a| acc + a);
+
+/// Returns the index of the first item that compares equal to the requested item.
+/// Returns -1 if it is not found.
+let<T: Eq> index_of: T[], T -> int = |arr, x| internal::index_of(arr, x, 0);
+
 mod internal {
     use std::utils::Option;
     use super::Slice;
@@ -58,6 +66,18 @@ mod internal {
     use super::slice_pop;
     use super::to_slice;
     use super::to_array;
+
+    // TODO use slice.
+    let<T: Eq> index_of: T[], T, int -> int = |arr, x, p|
+        if p >= std::array::len(arr) {
+            -1
+        } else {
+            if arr[p] == x {
+                p
+            } else {
+                index_of(arr, x, p + 1)
+            }
+        };
 
     let<T: ToString> sort: Slice<T>, (T, T -> bool) -> T[] = |slice, lt| match slice {
         Slice::S(_, _, 0) => [],

@@ -592,9 +592,10 @@ mod internal {
         /// Expand the sub-expressions and then visit the expression again
         // TODO use iter instead of vec?
         Operator(Vec<&'a Expression>),
-        /// Expand the expression with newly added local variables.
+        /// Expand the expression with newly added local variables,
         WithAddedLocals(&'a Expression, Vec<Arc<Value<'a, T>>>),
-        Block(&'a [StatementInsideBlock<Expression>], &'a Expression),
+        LetStatement(Pattern, &'a Expression),
+        ConstraintExpression(&'a Expression),
     }
 
     pub fn evaluate<'a, 'b, T: FieldElement>(
@@ -625,6 +626,10 @@ mod internal {
                     locals.truncate(len);
                     continue;
                 }
+                StackItem::Statement(s) => {
+                    evaluate_statement(s, &mut locals, type_args, symbols)?;
+                    continue;
+                }
             };
             match result {
                 ExpandResult::Value(v) => value_stack.push(v),
@@ -644,7 +649,13 @@ mod internal {
                 ExpandResult::Block(statements, expr) => {
                     expr_stack.push(StackItem::TruncateLocals(locals.len()));
                     expr_stack.push(StackItem::Expand(expr));
-                    expr_stack.extend(statements.iter().rev().map(|s| StackItem::Statement(s)));
+                    expr_stack.extend(statements.iter().rev().map(|s| match s {
+                        StatementInsideBlock::LetStatement(s) => {
+                            // expand expression and then match pattern - or maybe jsut have a separate stack item.
+                            StackItem::LetStatement(s.pattern, s.value)
+                        }
+                        StatementInsideBlock::Expression(e) => StackItem::Expand(e), // TODO but add constraints
+                    }));
                 }
             }
         }
@@ -821,40 +832,41 @@ mod internal {
                 let body = if *condition { body } else { else_body };
                 return Ok(ExpandResult::WithAddedLocals(body, vec![]));
             }
-            Expression::BlockExpression(statements, expr) => {
-                let mut locals = locals.to_vec();
-                for statement in statements {
-                    match statement {
-                        StatementInsideBlock::LetStatement(LetStatementInsideBlock {
-                            pattern,
-                            value,
-                        }) => {
-                            let value = if let Some(value) = value {
-                                evaluate(value, &locals, type_args, symbols)?
-                            } else {
-                                let Pattern::Variable(name) = pattern else {
-                                    unreachable!()
-                                };
-                                symbols.new_witness_column(name, SourceRef::unknown())?
-                            };
-                            locals.extend(
-                                Value::try_match_pattern(&value, pattern).unwrap_or_else(|| {
-                                    panic!("Irrefutable pattern did not match: {pattern} = {value}")
-                                }),
-                            );
-                        }
-                        StatementInsideBlock::Expression(expr) => {
-                            let result = evaluate(expr, &locals, type_args, symbols)?;
-                            symbols.add_constraints(result, SourceRef::unknown())?;
-                        }
-                    }
-                }
-                evaluate(expr, &locals, type_args, symbols)?
-            }
 
-            _ => todo!(),
+            _ => unreachable!(),
         };
         Ok(ExpandResult::Value(value))
+    }
+
+    fn evaluate_statement<'a, 'b, T: FieldElement>(
+        statement: &'a StatementInsideBlock<Expression>,
+        locals: &mut Vec<Arc<Value<'a, T>>>,
+        type_args: &'b HashMap<String, Type>,
+        symbols: &mut impl SymbolLookup<'a, T>,
+    ) -> Result<ExpandResult, EvalError> {
+        match statement {
+            StatementInsideBlock::LetStatement(LetStatementInsideBlock { pattern, value }) => {
+                let value = if let Some(value) = value {
+                    // TODO we should expand this already one level higher.
+
+                    evaluate(value, &locals, type_args, symbols)?
+                } else {
+                    let Pattern::Variable(name) = pattern else {
+                        unreachable!()
+                    };
+                    symbols.new_witness_column(name, SourceRef::unknown())?
+                };
+                locals.extend(
+                    Value::try_match_pattern(&value, pattern).unwrap_or_else(|| {
+                        panic!("Irrefutable pattern did not match: {pattern} = {value}")
+                    }),
+                );
+            }
+            StatementInsideBlock::Expression(expr) => {
+                let result = evaluate(expr, &locals, type_args, symbols)?;
+                symbols.add_constraints(result, SourceRef::unknown())?;
+            }
+        }
     }
 
     fn evaluate_function_call<'a, T: FieldElement>(

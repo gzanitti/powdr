@@ -62,9 +62,9 @@ let unwrap_or_else = |x, f| match x {
 /// This is a 2-3-4-tree, which means that each node has
 /// up to 3 items and a number of children that is one more
 /// than the number of items.
-enum BTreeNode<K> {
-    Inner(K[], BTreeNode<K>[]),
-    Lead(K[]),
+enum BTreeNode<K, V> {
+    Inner((K, V)[], BTreeNode<(K, V)>[]),
+    Lead((K, V)[]),
 }
 
 enum CmpResult {
@@ -100,7 +100,6 @@ let b_tree_search_in_node = |items, k, cmp| {
     unwrap_or_else(r, || NodeSearchResult::InChild(std::array::len(items)))
 };
 
-// TODO this does not detect if a key already exists.
 let b_tree_insert = |b_tree, k, v, cmp| match b_tree {
     BTreeNode::N([i1, i2, i3], [c1, c2, c3, c4]) => {
 
@@ -111,12 +110,56 @@ let b_tree_insert = |b_tree, k, v, cmp| match b_tree {
 };
 
 mod internal_insert {
+    let max_items = 3;
+    enum InsertResult<K, V> {
+        Split((K, V), BTreeNode<K, V>, BTreeNode<K, V>),
+        Updated(BTreeNode<K, V>)
+    }
     let b_tree_insert = |b_tree, k, v, cmp| match b_tree {
-        BTreeNode::Leaf([v1, v2, v3]) => (Option::Some(v2), BTreeNode::Leaf(sort([v1, v3, (k, v)], cmp))),
-        BTreeNode::Leaf(items) => (Option::None, BTreeNode::
-
+        BTreeNode::Leaf(items) => insert_into_leaf(items, (k, v), cmp),
         BTreeNode::Inner(items, children) => {
-
+            match b_tree_search_in_node(items, k, cmp) {
+                InNode(i) => InsertResult::Updated(BTreeNode::Inner(array_set(items, i, (k, v)), children)),
+                InChild(i) => {
+                    match b_tree_insert(children[i], k, v, cmp) {
+                        InsertResult::Updated(child) => InsertResult::Updated(BTreeNode::Inner(items, array_set(children, i, child))),
+                        InsertResult::Split((k1, v1), left, right) =>
+                            insert_into_inner(items, children, (k1, v1), i, left, right, cmp),
+                    }
+                }
+            }
         },
     };
+    let insert_into_leaf = |items, (k, v), cmp| {
+        let new_items = insert(items, (k, v), cmp);
+        if std::array::len(new_items) <= max_items {
+            InsertResult::Updated(BTreeNode::Leaf(new_items))
+        } else {
+            let split = (std::array::len(items) - 1) / 2;
+            let left = array_slice(items, 0, split);
+            let right = array_slice(items, split + 1, std::array::len(items) - split - 1);
+            InsertResult::Split(items[split], BTreeNode::Leaf(left), BTreeNode::Leaf(right))
+        }
+    };
+    let insert_into_inner = 
+    let insert = |items, (k, v), cmp| {
+        let (new_items, ins) = fold(items, ([], false), |(acc, inserted), (key, value)| {
+            if inserted {
+                (acc + [(key, value)], inserted)
+            } else {
+                match cmp(k, key) {
+                    CmpResult::Less => (acc + [(k, v), (key, value)], true),
+                    CmpResult::Equal => (acc + [(k, v)], true),
+                    CmpResult::Greater => (acc + [(key, value)], inserted),
+                }
+            }
+        });
+        if ins {
+            new_items
+        } else {
+            new_items + [(k, v)]
+        }
+    };
+    let array_set = |arr, i, x| map_enumerated(arr, |j, y| if i == j { x } else { y });
+    let array_slice = |arr, start, len| std::array::new(len, |i| arr[start + i]);
 }

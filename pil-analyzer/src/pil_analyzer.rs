@@ -11,8 +11,8 @@ use powdr_ast::parsed::asm::{
 use powdr_ast::parsed::types::{ArrayType, Type};
 use powdr_ast::parsed::visitor::Children;
 use powdr_ast::parsed::{
-    self, FunctionKind, LambdaExpression, PILFile, PilStatement, SelectedExpressions,
-    SymbolCategory,
+    self, analyze_match_patterns, FunctionKind, LambdaExpression, PILFile, PilStatement,
+    SelectedExpressions, SymbolCategory,
 };
 use powdr_number::{DegreeType, FieldElement, GoldilocksField};
 
@@ -52,6 +52,7 @@ fn analyze<T: FieldElement>(files: Vec<PILFile>) -> Analyzed<T> {
     analyzer.process(files);
     analyzer.side_effect_check();
     analyzer.type_check();
+    //analyzer.match_exhaustiveness_check();
     analyzer.condense()
 }
 
@@ -315,6 +316,14 @@ impl PILAnalyzer {
             };
             *ts = Some(ty.into());
         }
+    }
+
+    pub fn match_exhaustiveness_check() {
+        let patterns = vec![];
+        let report = analyze_match_patterns(&patterns);
+
+        println!("Match exhaustiveness check:");
+        println!("{:?}", report);
     }
 
     pub fn condense<T: FieldElement>(self) -> Analyzed<T> {

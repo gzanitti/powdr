@@ -1466,7 +1466,7 @@ enum ValueSpace {
 impl ValueSpace {
     fn subtract(&mut self, pattern: &Pattern) {
         match (&mut *self, pattern) {
-            (_, Pattern::CatchAll(_)) => {
+            (_, Pattern::CatchAll(_)) | (_, Pattern::Variable(_, _)) => {
                 *self = ValueSpace::Empty;
             }
             (ValueSpace::Any, Pattern::Number(_, n)) => {
@@ -1479,12 +1479,23 @@ impl ValueSpace {
                 if patterns.iter().all(|p| matches!(p, Pattern::CatchAll(_))) {
                     *self = ValueSpace::Empty;
                 } else {
-                    *self = ValueSpace::Tuple(vec![ValueSpace::Any; patterns.len()]);
+                    let mut tuple_spaces = vec![ValueSpace::Any; patterns.len()];
+                    for (i, p) in patterns.iter().enumerate() {
+                        tuple_spaces[i].subtract(p);
+                    }
+                    *self = ValueSpace::Tuple(tuple_spaces);
                 }
             }
             (ValueSpace::Any, Pattern::Array(_, patterns)) => {
-                let spaces = vec![ValueSpace::Any; patterns.len()];
-                *self = ValueSpace::Array(spaces, true);
+                if patterns.iter().all(|p| matches!(p, Pattern::CatchAll(_))) {
+                    *self = ValueSpace::Empty;
+                } else {
+                    let mut tuple_spaces = vec![ValueSpace::Any; patterns.len()];
+                    for (i, p) in patterns.iter().enumerate() {
+                        tuple_spaces[i].subtract(p);
+                    }
+                    *self = ValueSpace::Array(tuple_spaces, true);
+                }
             }
             (ValueSpace::Any, Pattern::Enum(_, name, fields)) => {
                 let mut value_fields = HashMap::new();
@@ -1497,9 +1508,6 @@ impl ValueSpace {
                 covered.insert(name.name().clone());
                 *self = ValueSpace::Enum(name.clone(), value_fields, covered);
             }
-            (ValueSpace::Any, Pattern::Variable(_, _)) => {
-                *self = ValueSpace::Empty;
-            }
             (ValueSpace::Number(_), Pattern::Number(_, n)) => {
                 *self = ValueSpace::Number(Some(n.clone()));
             }
@@ -1509,10 +1517,15 @@ impl ValueSpace {
             (ValueSpace::Tuple(spaces), Pattern::Tuple(_, patterns)) => {
                 if spaces.len() == patterns.len() {
                     for (space, pattern) in spaces.iter_mut().zip(patterns) {
+                        println!("tuple space: {:?}, tuple pattern: {:?}", space, pattern);
                         space.subtract(pattern);
+                        println!("result tuple space: {:?}", space);
+                        println!();
                     }
                     if spaces.iter().all(|s| s.is_empty()) {
                         *self = ValueSpace::Empty;
+                    } else {
+                        *self = ValueSpace::Tuple(spaces.clone());
                     }
                 }
             }
@@ -1572,14 +1585,11 @@ impl ValueSpace {
                 } else {
                     let mut value_fields = HashMap::new();
                     value_fields.insert(
-                        name.name().to_string(),
+                        name.to_string(),
                         enum_fields.clone().map(|f| vec![ValueSpace::Any; f.len()]),
                     );
                     *self = ValueSpace::Enum(name.clone(), value_fields, covered.clone());
                 }
-            }
-            (_, Pattern::Variable(_, _)) => {
-                *self = ValueSpace::Empty;
             }
             _ => {}
         }
@@ -1607,7 +1617,11 @@ fn analyze_patterns(
             redundant_patterns.push(index);
         } else {
             let mut pattern_space = value_space.clone();
+            println!("pattern_space: {:?}", pattern_space);
+            println!("pattern: {}", pattern);
             pattern_space.subtract(pattern);
+            println!("result pattern_space: {:?}", pattern_space);
+            println!("__________________________");
 
             if let Pattern::Enum(_, name, _) = pattern {
                 if pattern_space.is_empty() {
@@ -2165,6 +2179,7 @@ mod tests {
             vec!["None".to_string(), "Some".to_string()],
         );
         let report = analyze_match_patterns(&patterns, enums);
+        println!("{:?}", report);
         assert_eq!(report.is_exhaustive, true);
         assert_eq!(report.redundant_patterns.is_empty(), true);
     }

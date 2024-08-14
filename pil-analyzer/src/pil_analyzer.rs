@@ -318,9 +318,27 @@ impl PILAnalyzer {
         }
     }
 
-    pub fn match_exhaustiveness_check() {
+    pub fn match_exhaustiveness_check(&self) {
+        let enums: HashMap<_, _> = self
+            .definitions
+            .iter()
+            .filter_map(|(_, (_, def))| {
+                if let Some(FunctionValueDefinition::TypeDeclaration(enum_decl)) = def {
+                    Some((
+                        enum_decl.name.clone(),
+                        enum_decl
+                            .variants
+                            .iter()
+                            .map(|v| v.name.clone())
+                            .collect::<Vec<_>>(),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
         let patterns = vec![];
-        let report = analyze_match_patterns(&patterns);
+        let report = analyze_match_patterns(&patterns, enums);
 
         println!("Match exhaustiveness check:");
         println!("{:?}", report);

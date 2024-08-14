@@ -6,7 +6,7 @@ pub mod types;
 pub mod visitor;
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     iter::{empty, once},
     ops,
     str::FromStr,
@@ -1455,7 +1455,11 @@ enum ValueSpace {
     String(Option<String>),
     Tuple(Vec<ValueSpace>),
     Array(Vec<ValueSpace>, bool), // bool indicates if it can be extended
-    Enum(SymbolPath, HashMap<String, Option<Vec<ValueSpace>>>),
+    Enum(
+        SymbolPath,
+        HashMap<String, Option<Vec<ValueSpace>>>,
+        HashSet<String>,
+    ),
     Empty,
 }
 
@@ -1483,12 +1487,15 @@ impl ValueSpace {
                 *self = ValueSpace::Array(spaces, true);
             }
             (ValueSpace::Any, Pattern::Enum(_, name, fields)) => {
-                let mut variants = HashMap::new();
-                variants.insert(
-                    name.to_string(),
+                let mut value_fields = HashMap::new();
+                value_fields.insert(
+                    name.name().to_string(),
                     fields.clone().map(|f| vec![ValueSpace::Any; f.len()]),
                 );
-                *self = ValueSpace::Enum(name.clone(), variants);
+
+                let mut covered = HashSet::new();
+                covered.insert(name.name().clone());
+                *self = ValueSpace::Enum(name.clone(), value_fields, covered);
             }
             (ValueSpace::Any, Pattern::Variable(_, _)) => {
                 *self = ValueSpace::Empty;
@@ -1535,9 +1542,14 @@ impl ValueSpace {
                     }
                 }
             }
-            (ValueSpace::Enum(enum_name, variants), Pattern::Enum(_, name, enum_fields)) => {
+            (
+                ValueSpace::Enum(enum_name, variants, covered),
+                Pattern::Enum(_, name, enum_fields),
+            ) => {
                 if enum_name == name {
-                    if let Some(fields) = variants.get_mut(enum_name.name()) {
+                    let variant_name = name.name();
+                    covered.insert(variant_name.clone());
+                    if let Some(fields) = variants.get_mut(variant_name) {
                         if let Some(pattern_fields) = enum_fields {
                             if let Some(space_fields) = fields {
                                 if space_fields.len() == pattern_fields.len() {
@@ -1557,6 +1569,13 @@ impl ValueSpace {
                             *fields = None;
                         }
                     }
+                } else {
+                    let mut value_fields = HashMap::new();
+                    value_fields.insert(
+                        name.name().to_string(),
+                        enum_fields.clone().map(|f| vec![ValueSpace::Any; f.len()]),
+                    );
+                    *self = ValueSpace::Enum(name.clone(), value_fields, covered.clone());
                 }
             }
             (_, Pattern::Variable(_, _)) => {
@@ -1569,16 +1588,19 @@ impl ValueSpace {
     fn is_empty(&self) -> bool {
         match self {
             ValueSpace::Empty => true,
-            ValueSpace::Enum(_, variants) => variants.values().all(|v| v.is_none()),
             _ => false,
         }
     }
 }
 
-fn analyze_patterns(patterns: &[Pattern]) -> (bool, Vec<usize>, ValueSpace) {
+fn analyze_patterns(
+    patterns: &[Pattern],
+    enums: &HashMap<String, Vec<String>>,
+) -> (bool, Vec<usize>, ValueSpace) {
     let mut value_space = ValueSpace::Any;
     let mut redundant_patterns = Vec::new();
     let mut is_empty = false;
+    let mut covered_enums = HashMap::new();
 
     for (index, pattern) in patterns.iter().enumerate() {
         if is_empty {
@@ -1586,6 +1608,25 @@ fn analyze_patterns(patterns: &[Pattern]) -> (bool, Vec<usize>, ValueSpace) {
         } else {
             let mut pattern_space = value_space.clone();
             pattern_space.subtract(pattern);
+
+            if let Pattern::Enum(_, name, _) = pattern {
+                if pattern_space.is_empty() {
+                    let full_name = name.to_string();
+                    let splitted = full_name.split("::").collect::<Vec<_>>();
+                    let enum_name = splitted[..splitted.len() - 1].join("::");
+                    let variant_name = name.name().to_string();
+                    covered_enums
+                        .entry(enum_name.clone())
+                        .or_insert_with(HashSet::new)
+                        .insert(variant_name);
+
+                    if let Some(enum_variants) = enums.get(&enum_name) {
+                        if covered_enums[&enum_name].len() == enum_variants.len() {
+                            pattern_space = ValueSpace::Empty;
+                        }
+                    }
+                }
+            }
 
             if pattern_space == value_space {
                 redundant_patterns.push(index);
@@ -1599,13 +1640,21 @@ fn analyze_patterns(patterns: &[Pattern]) -> (bool, Vec<usize>, ValueSpace) {
         }
     }
 
-    let is_exhaustive = value_space.is_empty();
+    let is_exhaustive = value_space.is_empty()
+        && covered_enums.iter().all(|(enum_name, covered_variants)| {
+            enums
+                .get(enum_name)
+                .map_or(true, |variants| covered_variants.len() == variants.len())
+        });
 
     (is_exhaustive, redundant_patterns, value_space)
 }
 
-pub fn analyze_match_patterns(patterns: &[Pattern]) -> MatchAnalysisReport {
-    let (is_exhaustive, redundant_indices, _remaining_space) = analyze_patterns(patterns);
+pub fn analyze_match_patterns(
+    patterns: &[Pattern],
+    enums: HashMap<String, Vec<String>>,
+) -> MatchAnalysisReport {
+    let (is_exhaustive, redundant_indices, _remaining_space) = analyze_patterns(patterns, &enums);
 
     MatchAnalysisReport {
         is_exhaustive,
@@ -1639,7 +1688,8 @@ mod tests {
             Pattern::String(SourceRef::unknown(), "B".to_string()),
         ];
 
-        let report = analyze_match_patterns(&patterns);
+        let enums = HashMap::new();
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, false);
         assert_eq!(report.redundant_patterns.is_empty(), true);
     }
@@ -1652,7 +1702,8 @@ mod tests {
             Pattern::String(SourceRef::unknown(), "A".to_string()),
         ];
 
-        let report = analyze_match_patterns(&patterns);
+        let enums = HashMap::new();
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, false);
         assert_eq!(report.redundant_patterns, vec![1, 2]);
     }
@@ -1664,7 +1715,8 @@ mod tests {
             Pattern::String(SourceRef::unknown(), "B".to_string()),
             Pattern::String(SourceRef::unknown(), "B".to_string()),
         ];
-        let report = analyze_match_patterns(&patterns);
+        let enums = HashMap::new();
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, false);
         assert_eq!(report.redundant_patterns, vec![2]);
     }
@@ -1676,7 +1728,8 @@ mod tests {
             Pattern::String(SourceRef::unknown(), "A".to_string()),
             Pattern::CatchAll(SourceRef::unknown()),
         ];
-        let report = analyze_match_patterns(&patterns);
+        let enums = HashMap::new();
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, true);
         assert_eq!(report.redundant_patterns, vec![1]);
     }
@@ -1687,7 +1740,8 @@ mod tests {
             Pattern::String(SourceRef::unknown(), "A".to_string()),
             Pattern::CatchAll(SourceRef::unknown()),
         ];
-        let report = analyze_match_patterns(&patterns);
+        let enums = HashMap::new();
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, true);
         assert_eq!(report.redundant_patterns.is_empty(), true);
     }
@@ -1711,7 +1765,8 @@ mod tests {
             ),
             Pattern::CatchAll(SourceRef::unknown()),
         ];
-        let report = analyze_match_patterns(&patterns);
+        let enums = HashMap::new();
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, true);
         assert_eq!(report.redundant_patterns.is_empty(), true);
     }
@@ -1734,7 +1789,8 @@ mod tests {
                 ],
             ),
         ];
-        let report = analyze_match_patterns(&patterns);
+        let enums = HashMap::new();
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, true);
         assert_eq!(report.redundant_patterns, vec![1]);
     }
@@ -1760,7 +1816,8 @@ mod tests {
                 ],
             ),
         ];
-        let report = analyze_match_patterns(&patterns);
+        let enums = HashMap::new();
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, false);
         assert_eq!(report.redundant_patterns.is_empty(), true);
     }
@@ -1783,7 +1840,8 @@ mod tests {
                 ],
             ),
         ];
-        let report = analyze_match_patterns(&patterns);
+        let enums = HashMap::new();
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, false);
         assert_eq!(report.redundant_patterns.is_empty(), true);
     }
@@ -1810,7 +1868,8 @@ mod tests {
                 ],
             ),
         ];
-        let report = analyze_match_patterns(&patterns);
+        let enums = HashMap::new();
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, false);
         assert_eq!(report.redundant_patterns.is_empty(), true);
     }
@@ -1837,8 +1896,8 @@ mod tests {
                 ],
             ),
         ];
-        let report = analyze_match_patterns(&patterns);
-        println!("witnesses: {:?}", report);
+        let enums = HashMap::new();
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, false);
         assert_eq!(report.redundant_patterns.is_empty(), true);
     }
@@ -1848,7 +1907,10 @@ mod tests {
         let patterns = vec![
             Pattern::Enum(
                 SourceRef::unknown(),
-                SymbolPath::from_identifier("A".to_string()),
+                SymbolPath::from_parts(vec![
+                    Part::Named("A".to_string()),
+                    Part::Named("A".to_string()),
+                ]),
                 Some(vec![
                     Pattern::Number(SourceRef::unknown(), 1.into()),
                     Pattern::Number(SourceRef::unknown(), 2.into()),
@@ -1856,17 +1918,21 @@ mod tests {
             ),
             Pattern::Enum(
                 SourceRef::unknown(),
-                SymbolPath::from_identifier("A".to_string()),
+                SymbolPath::from_parts(vec![
+                    Part::Named("A".to_string()),
+                    Part::Named("B".to_string()),
+                ]),
                 Some(vec![
                     Pattern::Number(SourceRef::unknown(), 1.into()),
                     Pattern::Number(SourceRef::unknown(), 2.into()),
                 ]),
             ),
         ];
-        let report = analyze_match_patterns(&patterns);
-        println!("witnesses: {:?}", report);
+        let mut enums = HashMap::new();
+        enums.insert("A".to_string(), vec!["A".to_string(), "B".to_string()]);
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, false);
-        assert_eq!(report.redundant_patterns, vec![1]);
+        assert_eq!(report.redundant_patterns.is_empty(), true);
     }
 
     #[test]
@@ -1874,7 +1940,10 @@ mod tests {
         let patterns = vec![
             Pattern::Enum(
                 SourceRef::unknown(),
-                SymbolPath::from_identifier("A".to_string()),
+                SymbolPath::from_parts(vec![
+                    Part::Named("A".to_string()),
+                    Part::Named("B".to_string()),
+                ]),
                 Some(vec![
                     Pattern::Number(SourceRef::unknown(), 1.into()),
                     Pattern::Number(SourceRef::unknown(), 2.into()),
@@ -1882,7 +1951,9 @@ mod tests {
             ),
             Pattern::CatchAll(SourceRef::unknown()),
         ];
-        let report = analyze_match_patterns(&patterns);
+        let mut enums = HashMap::new();
+        enums.insert("A".to_string(), vec!["A".to_string(), "B".to_string()]);
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, true);
         assert_eq!(report.redundant_patterns.is_empty(), true);
     }
@@ -1892,20 +1963,29 @@ mod tests {
         let patterns = vec![
             Pattern::Enum(
                 SourceRef::unknown(),
-                SymbolPath::from_identifier("A".to_string()),
+                SymbolPath::from_parts(vec![
+                    Part::Named("A".to_string()),
+                    Part::Named("A".to_string()),
+                ]),
                 None,
             ),
             Pattern::CatchAll(SourceRef::unknown()),
             Pattern::Enum(
                 SourceRef::unknown(),
-                SymbolPath::from_identifier("B".to_string()),
+                SymbolPath::from_parts(vec![
+                    Part::Named("A".to_string()),
+                    Part::Named("B".to_string()),
+                ]),
                 Some(vec![
                     Pattern::Number(SourceRef::unknown(), 1.into()),
                     Pattern::Number(SourceRef::unknown(), 2.into()),
                 ]),
             ),
         ];
-        let report = analyze_match_patterns(&patterns);
+
+        let mut enums = HashMap::new();
+        enums.insert("A".to_string(), vec!["A".to_string(), "B".to_string()]);
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, true);
         assert_eq!(report.redundant_patterns, vec![2]);
     }
@@ -1915,20 +1995,27 @@ mod tests {
         let patterns = vec![
             Pattern::Enum(
                 SourceRef::unknown(),
-                SymbolPath::from_identifier("A".to_string()),
+                SymbolPath::from_parts(vec![
+                    Part::Named("A".to_string()),
+                    Part::Named("A".to_string()),
+                ]),
                 None,
             ),
             Pattern::Enum(
                 SourceRef::unknown(),
-                SymbolPath::from_identifier("B".to_string()),
+                SymbolPath::from_parts(vec![
+                    Part::Named("A".to_string()),
+                    Part::Named("B".to_string()),
+                ]),
                 Some(vec![
                     Pattern::Number(SourceRef::unknown(), 1.into()),
                     Pattern::Number(SourceRef::unknown(), 2.into()),
                 ]),
             ),
         ];
-        let report = analyze_match_patterns(&patterns);
-        println!("witnesses: {:?}", report);
+        let mut enums = HashMap::new();
+        enums.insert("A".to_string(), vec!["A".to_string(), "B".to_string()]);
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, false);
         assert_eq!(report.redundant_patterns.is_empty(), true);
     }
@@ -1938,7 +2025,10 @@ mod tests {
         let patterns = vec![
             Pattern::Enum(
                 SourceRef::unknown(),
-                SymbolPath::from_identifier("A".to_string()),
+                SymbolPath::from_parts(vec![
+                    Part::Named("A".to_string()),
+                    Part::Named("A".to_string()),
+                ]),
                 Some(vec![
                     Pattern::Number(SourceRef::unknown(), 1.into()),
                     Pattern::Number(SourceRef::unknown(), 2.into()),
@@ -1946,14 +2036,19 @@ mod tests {
             ),
             Pattern::Enum(
                 SourceRef::unknown(),
-                SymbolPath::from_identifier("A".to_string()),
+                SymbolPath::from_parts(vec![
+                    Part::Named("A".to_string()),
+                    Part::Named("A".to_string()),
+                ]),
                 Some(vec![
                     Pattern::Number(SourceRef::unknown(), 1.into()),
                     Pattern::Number(SourceRef::unknown(), 3.into()),
                 ]),
             ),
         ];
-        let report = analyze_match_patterns(&patterns);
+        let mut enums = HashMap::new();
+        enums.insert("A".to_string(), vec!["A".to_string()]);
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, false);
         assert_eq!(report.redundant_patterns.is_empty(), true);
     }
@@ -1963,7 +2058,10 @@ mod tests {
         let patterns = vec![
             Pattern::Enum(
                 SourceRef::unknown(),
-                SymbolPath::from_identifier("A".to_string()),
+                SymbolPath::from_parts(vec![
+                    Part::Named("A".to_string()),
+                    Part::Named("A".to_string()),
+                ]),
                 Some(vec![
                     Pattern::CatchAll(SourceRef::unknown()),
                     Pattern::CatchAll(SourceRef::unknown()),
@@ -1971,15 +2069,19 @@ mod tests {
             ),
             Pattern::Enum(
                 SourceRef::unknown(),
-                SymbolPath::from_identifier("A".to_string()),
+                SymbolPath::from_parts(vec![
+                    Part::Named("A".to_string()),
+                    Part::Named("A".to_string()),
+                ]),
                 Some(vec![
                     Pattern::Number(SourceRef::unknown(), 1.into()),
                     Pattern::Number(SourceRef::unknown(), 3.into()),
                 ]),
             ),
         ];
-        let report = analyze_match_patterns(&patterns);
-        println!("witnesses: {:?}", report);
+        let mut enums = HashMap::new();
+        enums.insert("A".to_string(), vec!["A".to_string()]);
+        let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, true);
         assert_eq!(report.redundant_patterns, vec![1]);
     }
@@ -1992,7 +2094,10 @@ mod tests {
                 Pattern::CatchAll(SourceRef::unknown()),
                 Pattern::Enum(
                     SourceRef::unknown(),
-                    SymbolPath::from_identifier("None".to_string()),
+                    SymbolPath::from_parts(vec![
+                        Part::Named("Option".to_string()),
+                        Part::Named("None".to_string()),
+                    ]),
                     None,
                 ),
             ],
@@ -2007,7 +2112,10 @@ mod tests {
                 Pattern::CatchAll(SourceRef::unknown()),
                 Pattern::Enum(
                     SourceRef::unknown(),
-                    SymbolPath::from_identifier("None".to_string()),
+                    SymbolPath::from_parts(vec![
+                        Part::Named("Option".to_string()),
+                        Part::Named("None".to_string()),
+                    ]),
                     None,
                 ),
             ],
@@ -2020,7 +2128,10 @@ mod tests {
                 Pattern::Variable(SourceRef::unknown(), "l_short".to_string()),
                 Pattern::Enum(
                     SourceRef::unknown(),
-                    SymbolPath::from_identifier("Some".to_string()),
+                    SymbolPath::from_parts(vec![
+                        Part::Named("Option".to_string()),
+                        Part::Named("Some".to_string()),
+                    ]),
                     Some(vec![Pattern::Variable(
                         SourceRef::unknown(),
                         "l_last".to_string(),
@@ -2034,7 +2145,10 @@ mod tests {
                 Pattern::Variable(SourceRef::unknown(), "r_short".to_string()),
                 Pattern::Enum(
                     SourceRef::unknown(),
-                    SymbolPath::from_identifier("Some".to_string()),
+                    SymbolPath::from_parts(vec![
+                        Part::Named("Option".to_string()),
+                        Part::Named("Some".to_string()),
+                    ]),
                     Some(vec![Pattern::Variable(
                         SourceRef::unknown(),
                         "r_last".to_string(),
@@ -2045,8 +2159,13 @@ mod tests {
         let arm3 = Pattern::Tuple(SourceRef::unknown(), vec![elem1, elem2]);
 
         let patterns = vec![arm1, arm2, arm3];
-        let report = analyze_match_patterns(&patterns);
-        println!("witnesses: {:?}", report);
-        //assert_eq!(witnesses.len(), 0);
+        let mut enums = HashMap::new();
+        enums.insert(
+            "Option".to_string(),
+            vec!["None".to_string(), "Some".to_string()],
+        );
+        let report = analyze_match_patterns(&patterns, enums);
+        assert_eq!(report.is_exhaustive, true);
+        assert_eq!(report.redundant_patterns, vec![]);
     }
 }

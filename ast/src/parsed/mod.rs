@@ -2166,6 +2166,6 @@ mod tests {
         );
         let report = analyze_match_patterns(&patterns, enums);
         assert_eq!(report.is_exhaustive, true);
-        assert_eq!(report.redundant_patterns, vec![]);
+        assert_eq!(report.redundant_patterns.is_empty(), true);
     }
 }

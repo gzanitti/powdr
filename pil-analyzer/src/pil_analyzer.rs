@@ -11,7 +11,7 @@ use powdr_ast::parsed::asm::{
 use powdr_ast::parsed::types::{ArrayType, Type};
 use powdr_ast::parsed::visitor::Children;
 use powdr_ast::parsed::{
-    self, analyze_match_patterns, FunctionKind, LambdaExpression, PILFile, PilStatement,
+    self, analyze_match_patterns, FunctionKind, LambdaExpression, PILFile, Pattern, PilStatement,
     SelectedExpressions, SymbolCategory,
 };
 use powdr_number::{DegreeType, FieldElement, GoldilocksField};
@@ -329,7 +329,7 @@ impl PILAnalyzer {
                         enum_decl
                             .variants
                             .iter()
-                            .map(|v| v.name.clone())
+                            .map(|v| (v.name.clone(), false))
                             .collect::<Vec<_>>(),
                     ))
                 } else {
@@ -337,11 +337,48 @@ impl PILAnalyzer {
                 }
             })
             .collect();
-        let patterns = vec![];
-        let report = analyze_match_patterns(&patterns, enums);
+        let all_patterns: Vec<_> = self
+            .definitions
+            .iter()
+            .filter_map(|(_, (_, def))| {
+                if let Some(FunctionValueDefinition::Expression(TypedExpression {
+                    type_scheme: _,
+                    e: Expression::MatchExpression(_, match_expr),
+                })) = def
+                {
+                    Some(
+                        match_expr
+                            .arms
+                            .iter()
+                            .map(|arm| arm.pattern.clone())
+                            .collect::<Vec<_>>(),
+                    )
+                } else {
+                    None
+                }
+            })
+            .collect();
 
-        println!("Match exhaustiveness check:");
-        println!("{:?}", report);
+        for patterns in all_patterns {
+            let mut new_enums = enums.clone();
+            patterns.iter().for_each(|pattern| {
+                if let Pattern::Enum(_, sp, _) = pattern {
+                    let name = sp.to_string();
+                    let parts: Vec<&str> = name.split("::").collect();
+                    let enum_name = parts[..parts.len() - 1].join("::");
+                    let variants = new_enums.get_mut(&enum_name).unwrap();
+                    variants.iter_mut().for_each(|v| {
+                        if v.0 == sp.to_string() {
+                            v.1 = true;
+                        }
+                    });
+                }
+            });
+            let report = analyze_match_patterns(&patterns, new_enums);
+            if report.is_exhaustive {
+                panic!("Match exhaustiveness check failed"); // TODO GZ: report error
+            }
+        }
     }
 
     pub fn condense<T: FieldElement>(self) -> Analyzed<T> {

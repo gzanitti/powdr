@@ -10,7 +10,9 @@ use std::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, Hash,
+)]
 pub struct SourceRef {
     pub file_name: Option<Arc<str>>,
     pub file_contents: Option<Arc<str>>,

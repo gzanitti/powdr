@@ -1464,14 +1464,18 @@ pub enum PatternSpace {
 impl PatternSpace {
     fn substract(&self, pattern: &Pattern) -> PatternSpace {
         match (self, pattern) {
-            (PatternSpace::Number(ns, _ext), Pattern::CatchAll(_))
-            | (PatternSpace::Number(ns, _ext), Pattern::Variable(_, _)) => {
-                PatternSpace::Number(ns.clone(), true)
-            }
-            (PatternSpace::String(ss, _ext), Pattern::CatchAll(_))
-            | (PatternSpace::String(ss, _ext), Pattern::Variable(_, _)) => {
-                PatternSpace::String(ss.clone(), true)
-            }
+            // (PatternSpace::Number(ns, _ext), Pattern::CatchAll(_))
+            // | (PatternSpace::Number(ns, _ext), Pattern::Variable(_, _)) => {
+            //     PatternSpace::Number(ns.clone(), true)
+            // }
+            // (PatternSpace::String(ss, _ext), Pattern::CatchAll(_))
+            // | (PatternSpace::String(ss, _ext), Pattern::Variable(_, _)) => {
+            //     PatternSpace::String(ss.clone(), true)
+            // }
+            // (PatternSpace::Enum(es, vs), Pattern::CatchAll(_))
+            // | (PatternSpace::Enum(es, vs), Pattern::Variable(_, _)) => {
+            //     PatternSpace::Enum(es.clone(), vs.clone())
+            // }
             (_, Pattern::CatchAll(_)) | (_, Pattern::Variable(_, _)) => PatternSpace::Empty,
             (PatternSpace::Any, Pattern::Number(_, n)) => {
                 PatternSpace::Number(HashSet::from_iter(vec![n.clone()]), false)
@@ -1569,6 +1573,54 @@ impl PatternSpace {
         }
     }
 
+    fn union(&self, other: &PatternSpace) -> PatternSpace {
+        match (self, other) {
+            (PatternSpace::Any, _) => PatternSpace::Any,
+            (PatternSpace::Empty, _) => other.clone(),
+            (_, PatternSpace::Empty) => self.clone(),
+            (PatternSpace::Number(ns, _ext), PatternSpace::Number(ns2, _ext2)) => {
+                PatternSpace::Number(
+                    HashSet::from_iter(ns.iter().cloned().chain(ns2.iter().cloned())),
+                    false,
+                )
+            }
+            (PatternSpace::String(ss, _ext), PatternSpace::String(ss2, _ext2)) => {
+                PatternSpace::String(
+                    HashSet::from_iter(ss.iter().cloned().chain(ss2.iter().cloned())),
+                    false,
+                )
+            }
+            (PatternSpace::Enum(es, vs), PatternSpace::Enum(es2, vs2)) => {
+                let mut new_es = es.clone();
+                new_es.extend(es2.iter().cloned());
+                let mut new_vs = vs.clone();
+                for (name, variants) in vs2 {
+                    if let Some(variants2) = vs.get(name) {
+                        let mut new_variants = Vec::new();
+                        for (pattern, space) in variants.iter().zip(variants2.iter()) {
+                            new_variants.push(space.union(pattern));
+                        }
+                        new_vs.insert(name.clone(), new_variants);
+                    }
+                }
+                PatternSpace::Enum(new_es, new_vs)
+            }
+            (PatternSpace::Tuple(ts), PatternSpace::Tuple(ts2)) => PatternSpace::Tuple(
+                ts.iter()
+                    .zip(ts2)
+                    .map(|(space, pattern)| space.union(pattern))
+                    .collect(),
+            ),
+            (PatternSpace::Array(ars), PatternSpace::Array(ars2)) => PatternSpace::Array(
+                ars.iter()
+                    .zip(ars2)
+                    .map(|(space, pattern)| space.union(pattern))
+                    .collect(),
+            ),
+            _ => PatternSpace::Empty,
+        }
+    }
+
     fn is_empty(&self, enums: &HashMap<String, Vec<(String, bool)>>) -> bool {
         match self {
             PatternSpace::Any => false,
@@ -1613,25 +1665,28 @@ fn analyze_patterns(
     patterns: &[Pattern],
     enums: &HashMap<String, Vec<(String, bool)>>,
 ) -> (bool, Vec<usize>, usize) {
-    let mut space = PatternSpace::Any;
+    let mut remaining_space = PatternSpace::Any;
+    let mut union_space = PatternSpace::Empty;
     let mut useless_indices = Vec::new();
 
     //let empty: bool = space.is_empty(enums);
     for (index, p) in patterns.iter().enumerate() {
-        if space.is_empty(enums) {
+        if remaining_space.is_empty(enums) {
             useless_indices.push(index);
         } else {
-            let new_space = space.substract(p);
+            let new_space = remaining_space.substract(p);
+            let new_union_space = union_space.union(&new_space);
+            println!("new_union_space: {:?}", new_union_space);
 
-            if new_space == space {
+            if new_space == remaining_space {
                 useless_indices.push(index);
             }
 
-            space = new_space;
+            remaining_space = new_space;
         }
     }
 
-    (space.is_empty(enums), useless_indices, 0)
+    (remaining_space.is_empty(enums), useless_indices, 0)
 }
 
 pub fn analyze_match_patterns(

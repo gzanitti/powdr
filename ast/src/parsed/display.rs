@@ -156,7 +156,7 @@ impl Display for Instruction {
             "{}{}{}",
             self.params.prepend_space_if_non_empty(),
             if self.links.is_empty() {
-                "".to_string()
+                " ".to_string()
             } else {
                 " ".to_string() + &self.links.iter().join(" ")
             },

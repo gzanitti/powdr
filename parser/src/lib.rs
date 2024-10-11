@@ -624,7 +624,7 @@ machine Main(a: Byte, b: Byte) {
     A <== mload(a, step);
     return A;
     }
-    instr assert_eq X, Y{ X = Y }
+    instr assert_eq X, Y { X = Y }
 }
 "#;
         let printed = format!("{}", parse_asm(Some("input"), input).unwrap_err_to_stderr());

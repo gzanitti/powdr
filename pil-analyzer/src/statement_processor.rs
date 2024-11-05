@@ -689,9 +689,9 @@ where
 
         iter::once(PILItem::Definition(
             symbol,
-            Some(FunctionValueDefinition::TraitDeclaration(
+            Some(FunctionValueDefinition::TraitDeclaration(Arc::new(
                 trait_decl.clone(),
-            )),
+            ))),
         ))
         .chain(trait_functions)
         .collect()

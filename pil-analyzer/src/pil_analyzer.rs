@@ -552,6 +552,8 @@ impl Children<Expression> for PILAnalyzer {
             self.definitions
                 .values()
                 .filter_map(|(_, def)| def.as_ref())
+                // Since definitions contains TraitDeclarations and TraitFunctions which share definitions, we filter TraitFunction to avoid duplicates
+                .filter(|def| !matches!(def, FunctionValueDefinition::TraitFunction(_, _)))
                 .flat_map(|def| def.children())
                 .chain(self.trait_impls.iter().flat_map(|impl_| impl_.children()))
                 .chain(self.proof_items.iter()),
@@ -563,6 +565,8 @@ impl Children<Expression> for PILAnalyzer {
             self.definitions
                 .values_mut()
                 .filter_map(|(_, def)| def.as_mut())
+                // Since definitions contains TraitDeclarations and TraitFunctions which share definitions, we filter TraitFunction to avoid duplicates
+                .filter(|def| !matches!(def, FunctionValueDefinition::TraitFunction(_, _)))
                 .flat_map(|def| def.children_mut())
                 .chain(
                     self.trait_impls

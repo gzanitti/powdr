@@ -1,3 +1,4 @@
+pub use powdr_analysis as asm_analyzer;
 pub use powdr_ast as ast;
 pub use powdr_backend as backend;
 pub use powdr_executor as executor;
